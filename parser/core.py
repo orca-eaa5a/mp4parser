@@ -2,8 +2,9 @@
 core.py contains class definitions used by both iso.py and non_iso.py, namely classes (Mp4Box and Mp4FullBox)
 that are used as parents for all the real, instantiated boxes. Also contains a header class definition.
 """
+from abc import abstractmethod
+from ctypes import Structure, c_uint32, sizeof
 import binascii
-import logging
 
 from parser.util import *
 
@@ -20,6 +21,7 @@ class Mp4Box:
         self.children = []
         self.box_info = {}
         self.byte_string = None
+        self.raw = b''
         # only top-level boxes contain an actual byte array for displaying the hex view, lower-level boxes simply
         # take a slice from the top-level box.
 
@@ -63,6 +65,36 @@ class Mp4FullBox(Mp4Box):
         self.version = four_bytes >> 24
         self.flags = four_bytes & 0xFFFFFF
 
+class Mp4CompileableBox(Mp4FullBox):
+    class CommonBox(Structure):
+        _fields_ = [
+            ('type', c_uint32),
+            ('size', c_uint32),
+            ('version_flag', c_uint32),
+            ('entry_count', c_uint32)
+        ]
+        def __init__(self) -> None:
+            super(Mp4CompileableBox.CommonBox, self).__init__(0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff)
+
+        def serialize(self):
+            for field, _ in self._fields_:
+                if getattr(self, field) == 0xffffffff:
+                    raise Exception('not all fileds are filled')
+            return bytes(self)
+        
+        @property
+        def __size__(self) -> int:
+            return sizeof(self)
+
+    def __init__(self, fp, header):
+        super().__init__(fp, header)
+        
+    @abstractmethod
+    def compile(self):
+        """Convert it's parsed information to raw binary
+        -
+        """
+        pass
 
 class Header:
     """
