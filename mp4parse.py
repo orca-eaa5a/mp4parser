@@ -1,4 +1,5 @@
 from io import BytesIO, BufferedReader
+import requests
 from parser.iso import *
 
 def get_box_size(fp):
@@ -9,12 +10,15 @@ def get_box_size(fp):
 class Mp4Parser(object):
     def __init__(self) -> None:
         self.fp = None
+        self.duration = 0
         self.ftyp = None
         self.moov = None
+        self.mvhd = None
         self.mdat = None
-        self.chunks = []
+        self.track_type = {}
+        self.tracks = {}
         pass
-    
+
     def set_binary(self, fp):
         """
         set target binary to parsing
@@ -23,16 +27,64 @@ class Mp4Parser(object):
             fp (_io.BufferedReader):
                 Readable Buffer or byte or bytearray
         """
-        if type(fp) == BufferedReader:
+        ty = type(fp)
+        if ty == BufferedReader:
             fp = BytesIO(fp.read())
-        elif type(fp) == bytes or type(fp) == bytearray:
+        elif ty == bytes or ty == bytearray:
             fp = BytesIO(fp)
+        elif ty == BytesIO:
+            pass
         else:
             return False
         
         self.fp = fp
 
         return True
+    
+    def byterange_request(self, url, start_byte, end_byte):
+        CHUNK_SIZE = 1024*1024*10 # 10mb request
+        if end_byte < CHUNK_SIZE:
+            CHUNK_SIZE = end_byte
+
+        current_offset = start_byte
+        _bin = b''
+        if type(start_byte) != int or type(end_byte) != int:
+            assert False
+        while True:
+            end_offset = current_offset + CHUNK_SIZE - 1
+            if current_offset + end_offset >= end_byte:
+                end_offset = end_byte - 1
+            resp = requests.get(url=url, headers={
+                'Range': 'bytes={}-{}'.format(current_offset, end_offset)
+            })
+            # check status code is http 206 (partital content)
+            if resp.status_code == 206 or resp.status_code == 200:
+                current_offset += len(resp.content)
+                _bin += resp.content
+                if current_offset >= end_byte:
+                    break
+            else:
+                assert False
+        
+        return _bin
+
+    def stream_parse(self, url):
+        def get_ftyp_raw_size(raw):
+            return int.from_bytes(raw[:4], byteorder="big")
+
+        def get_moov_raw_size(raw, offset=24):
+            return int.from_bytes(raw[offset:offset+4], byteorder="big")
+
+        _raw = self.byterange_request(url, 0, 40)
+        ftyp_sz = get_ftyp_raw_size(_raw)
+        moov_sz = get_moov_raw_size(_raw, ftyp_sz)
+        del _raw
+        _raw = BytesIO(self.byterange_request(url, 0, ftyp_sz + moov_sz))
+
+        self.set_binary(_raw)
+        self.parse()
+
+
 
     def parse(self):
         if not self.fp:
@@ -60,11 +112,12 @@ class Mp4Parser(object):
         # generate a sample list if there is a moov that contains traks N.B only ever 0,1 moov boxes
         moov = self.moov
         if moov:
+            self.mvhd = moov.get_first_box_matched('mvhd', False)
             traks = moov.search_boxes_for_type('trak', False)
-            sample_list = self.chunks
             for trak in traks:
                 tkhd = trak.get_first_box_matched('tkhd', False)
                 mdia = trak.get_first_box_matched('mdia', False)
+                hdlr = mdia.get_first_box_matched('hdlr', False)
                 mdhd = mdia.get_first_box_matched('mdhd', False)
                 minf = mdia.get_first_box_matched('minf', False)
                 stbl = minf.get_first_box_matched('stbl', False)
@@ -72,9 +125,8 @@ class Mp4Parser(object):
                 stsz = stbl.get_first_box_matched('stsz', False)
                 stsc = stbl.get_first_box_matched('stsc', False)
                 stts = stbl.get_first_box_matched('stts', False)
-                ctts = stbl.get_first_box_matched('ctts', False)
-                stss = stbl.get_first_box_matched('stss', False)
-                
+
+
                 if not stco:
                     stco = stbl.get_first_box_matched('co64', False)
                 if not stsz:
@@ -83,9 +135,16 @@ class Mp4Parser(object):
                 timescale = mdhd.box_info['timescale']
                 trak_id = tkhd.box_info['track_ID']
                 samplebox = stbl
+                self.duration = self.mvhd.box_info['duration']/self.mvhd.box_info['timescale']
                 chunk_offsets = stco.box_info['entry_list']
                 sample_size_box = stsz
-                
+                if trak_id not in self.track_type:
+                    self.track_type[trak_id] = hdlr.box_info['handler_type']
+                    self.tracks[trak_id] = {
+                        'trak': trak,
+                        'chunks': []
+                    }
+
                 if sample_size_box.box_info['sample_size'] > 0:
                     sample_sizes = [{'entry_size': sample_size_box.box_info['sample_size']}]*sample_size_box.box_info['sample_count']
                 else:
@@ -123,5 +182,5 @@ class Mp4Parser(object):
                             'offset': sample_offset
                         })
                         sample_offset += sample['entry_size']
-                    sample_list.append(chunk_dict)
+                    self.tracks[trak_id]['chunks'].append(chunk_dict)
                     sample_idx += samples_per_chunk

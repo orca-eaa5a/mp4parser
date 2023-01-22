@@ -3,7 +3,7 @@ core.py contains class definitions used by both iso.py and non_iso.py, namely cl
 that are used as parents for all the real, instantiated boxes. Also contains a header class definition.
 """
 from abc import abstractmethod
-from ctypes import Structure, c_uint32, sizeof
+from ctypes import BigEndianStructure, c_uint32, sizeof
 import binascii
 
 from parser.util import *
@@ -66,10 +66,10 @@ class Mp4FullBox(Mp4Box):
         self.flags = four_bytes & 0xFFFFFF
 
 class Mp4CompileableBox(Mp4FullBox):
-    class CommonBox(Structure):
+    class CommonBox(BigEndianStructure):
         _fields_ = [
-            ('type', c_uint32),
             ('size', c_uint32),
+            ('type', c_uint32),
             ('version_flag', c_uint32),
             ('entry_count', c_uint32)
         ]
@@ -127,6 +127,12 @@ class Header:
             return self._largesize
         else:
             return self._size
+    
+    def set_size(self, size):
+        if self._size == 1:
+            self._largesize = size
+        else:
+            self._size = size
 
     def get_header(self):
         """ returns all header properties as a dictionary """

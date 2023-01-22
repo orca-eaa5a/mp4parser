@@ -40,9 +40,16 @@ def box_factory(fp, header):
         box_type.capitalize() + 'Box')  # globals() Return a dictionary representing the current global symbol table
     if _box_class:
         the_box = _box_class(fp, header)
-        if the_box.__class__.__bases__[0] != ContainerBox:
-            fp.seek(-1*the_box.header.size, 1)
+        cur_off = fp.tell()
+        if not isinstance(the_box, ContainerBox):
+            fp.seek(the_box.start_of_box, 0)
             the_box.raw = fp.read(the_box.header.size)
+            
+        else:
+            fp.seek(the_box.start_of_box, 0)
+            the_box.raw = fp.read(the_box.header.header_size)
+        fp.seek(cur_off)
+
         return the_box
     else:
         return parser.non_iso.box_factory_non_iso(fp, header)
@@ -346,29 +353,30 @@ class MetaBox(Mp4Box):
     def __init__(self, fp, header):
         super().__init__(fp, header)
         try:
-            bytes_left = self.size - self.header.header_size
-            first_four_bytes = read_u32(fp)
-            second_four_bytes = fp.read(4)
-            if second_four_bytes.decode('utf-8', errors="ignore") == 'hdlr':
-                # it's non-versioned
-                fp.seek(-8, 1)
-            else:
-                # it's versioned
-                self.version = first_four_bytes >> 24
-                self.flags = first_four_bytes & 0xFFFFFF
-                fp.seek(-4, 1)
-                bytes_left -= 4
-            while bytes_left > 7:
-                current_header = Header(fp)
-                current_box = box_factory(fp, current_header)
-                self.children.append(current_box)
-                bytes_left -= current_box.size
+            """v-- not valuable info too"""
+            # bytes_left = self.size - self.header.header_size
+            # first_four_bytes = read_u32(fp)
+            # second_four_bytes = fp.read(4)
+            # if second_four_bytes.decode('utf-8', errors="ignore") == 'hdlr':
+            #     # it's non-versioned
+            #     fp.seek(-8, 1)
+            # else:
+            #     # it's versioned
+            #     self.version = first_four_bytes >> 24
+            #     self.flags = first_four_bytes & 0xFFFFFF
+            #     fp.seek(-4, 1)
+            #     bytes_left -= 4
+            # while bytes_left > 7:
+            #     current_header = Header(fp)
+            #     current_box = box_factory(fp, current_header)
+            #     self.children.append(current_box)
+            #     bytes_left -= current_box.size
+            pass
         finally:
             fp.seek(self.start_of_box + self.size)
 
 
 class MdatBox(Mp4Box):
-
     def __init__(self, fp, header):
         super().__init__(fp, header)
         self.sample_list = []
@@ -379,7 +387,6 @@ class MdatBox(Mp4Box):
 
 
 class MvhdBox(Mp4FullBox):
-
     def __init__(self, fp, header):
         super().__init__(fp, header)
         try:
@@ -406,6 +413,22 @@ class MvhdBox(Mp4FullBox):
             self.box_info['next_track_id'] = read_u32(fp)
         finally:
             fp.seek(self.start_of_box + self.size)
+    
+    def edit_duration(self, duration):
+        duration_offset = self.header.header_size + 4
+        range = 4
+        c = 'I'
+        if self.version == 1:
+            range = 8
+            c = 'Q'
+            duration_offset += 20
+        else:
+            duration_offset += 12
+        self.raw = bytearray(self.raw)
+        self.raw[duration_offset:duration_offset+range] = \
+            struct.pack('>{}'.format(c), int(duration * self.box_info['timescale']))
+
+        self.raw = bytes(self.raw)
 
 
 class MfhdBox(Mp4FullBox):
@@ -489,6 +512,22 @@ class TkhdBox(Mp4FullBox):
             self.box_info['height'] = read_u16_16(fp)
         finally:
             fp.seek(self.start_of_box + self.size)
+    
+    def edit_duration(self, duration, timescale):
+        duration_offset = self.header.header_size + 4
+        range = 4
+        c = 'I'
+        if self.version == 1:
+            range = 8
+            c = 'Q'
+            duration_offset += 20
+        else:
+            duration_offset += 12
+        self.raw = bytearray(self.raw)
+        self.raw[duration_offset:duration_offset+range] = \
+            struct.pack('>{}'.format(c), int(duration * timescale))
+
+        self.raw = bytes(self.raw)
 
 
 class TfhdBox(Mp4FullBox):
@@ -848,7 +887,6 @@ class TfdtBox(Mp4FullBox):
 
 
 class MdhdBox(Mp4FullBox):
-
     def __init__(self, fp, header):
         super().__init__(fp, header)
         try:
@@ -878,6 +916,22 @@ class MdhdBox(Mp4FullBox):
                 self.box_info['language'] = ch1 + ch2 + ch3
         finally:
             fp.seek(self.start_of_box + self.size)
+    
+    def edit_duration(self, duration):
+        duration_offset = self.header.header_size + 4
+        range = 4
+        c = 'I'
+        if self.version == 1:
+            range = 8
+            c = 'Q'
+            duration_offset += 20
+        else:
+            duration_offset += 12
+        self.raw = bytearray(self.raw)
+        self.raw[duration_offset:duration_offset+range] = \
+            struct.pack('>{}'.format(c), int(duration * self.box_info['timescale']))
+
+        self.raw = bytes(self.raw)
 
 
 class ElngBox(Mp4FullBox):
@@ -898,8 +952,9 @@ class DrefBox(Mp4FullBox):
             self.box_info['entry_count'] = read_u32(fp)
             for i in range(self.box_info['entry_count']):
                 current_header = Header(fp)
-                current_box = box_factory(fp, current_header)
-                self.children.append(current_box)
+                fp.read(self.size - current_header.size)
+                # current_box = box_factory(fp, current_header)
+                # self.children.append(current_box)
         finally:
             fp.seek(self.start_of_box + self.size)
 
@@ -1053,8 +1108,10 @@ class StsdBox(Mp4FullBox):
             self.box_info['entry_count'] = read_u32(fp)
             for i in range(self.box_info['entry_count']):
                 current_header = Header(fp)
-                current_box = box_factory(fp, current_header)
-                self.children.append(current_box)
+                fp.read(self.size - current_header.size)
+                """v-- in my situation, this is not valuable info"""
+                # current_box = box_factory(fp, current_header)
+                # self.children.append(current_box)
         finally:
             fp.seek(self.start_of_box + self.size)
 
@@ -1074,14 +1131,15 @@ class SttsBox(Mp4CompileableBox):
     def compile(self):
         raw = b''
         box = Mp4CompileableBox.CommonBox()
-        box.type = self.type.encode()
+        box.type = int.from_bytes(self.type.encode(), byteorder='big')
         box.version_flag = 0
         box.entry_count = self.box_info['entry_count']
         for etry in self.box_info['entry_list']:
             raw += struct.pack('>II', etry['sample_count'], etry['sample_delta'])
         box.size = box.__size__ + len(raw)
+        self.raw = bytes(box) + raw
 
-        return bytes(box) + raw
+        return self.raw
 
 
 class StscBox(Mp4CompileableBox):
@@ -1103,14 +1161,15 @@ class StscBox(Mp4CompileableBox):
     def compile(self):
         raw = b''
         box = Mp4CompileableBox.CommonBox()
-        box.type = self.type.encode()
+        box.type = int.from_bytes(self.type.encode(), byteorder='big')
         box.version_flag = 0
         box.entry_count = self.box_info['entry_count']
         for etry in self.box_info['entry_list']:
             raw += struct.pack('>III', etry['first_chunk'], etry['samples_per_chunk'], etry['samples_description_index'])
         box.size = box.__size__ + len(raw)
+        self.raw = bytes(box) + raw
 
-        return bytes(box) + raw
+        return self.raw
 
 class StcoBox(Mp4CompileableBox):
 
@@ -1127,17 +1186,17 @@ class StcoBox(Mp4CompileableBox):
     def compile(self):
         raw = b''
         box = Mp4CompileableBox.CommonBox()
-        box.type = self.type.encode()
+        box.type = int.from_bytes(self.type.encode(), byteorder='big')
         box.version_flag = 0
         box.entry_count = self.box_info['entry_count']
         for etry in self.box_info['entry_list']:
             raw += struct.pack('>I', etry['chunk_offset'])
         box.size = box.__size__ + len(raw)
-
-        return bytes(box) + raw
+        self.raw = bytes(box) + raw
+        
+        return self.raw
 
 class StszBox(Mp4FullBox):
-
     def __init__(self, fp, header):
         super().__init__(fp, header)
         try:
@@ -1153,15 +1212,16 @@ class StszBox(Mp4FullBox):
     def compile(self):
         raw = b''
         box = Mp4CompileableBox.CommonBox()
-        box.type = self.type.encode()
+        box.type = int.from_bytes(self.type.encode(), byteorder='big')
         box.version_flag = 0
         box.entry_count = self.box_info['sample_size']
         for etry in self.box_info['entry_list']:
             raw += struct.pack('>I', etry['entry_size'])
-        raw = struct.pack('>I', etry['sample_count']) + raw
+        raw = struct.pack('>I', self.box_info['sample_count']) + raw
         box.size = box.__size__ + len(raw)
-
-        return bytes(box) + raw
+        self.raw = bytes(box) + raw
+        
+        return self.raw
 
 
 class StssBox(Mp4CompileableBox):
@@ -1179,14 +1239,15 @@ class StssBox(Mp4CompileableBox):
     def compile(self):
         raw = b''
         box = Mp4CompileableBox.CommonBox()
-        box.type = self.type.encode()
+        box.type = int.from_bytes(self.type.encode(), byteorder='big')
         box.version_flag = 0
         box.entry_count = self.box_info['entry_count']
         for etry in self.box_info['entry_list']:
             raw += struct.pack('>I', etry['sample_number'])
         box.size = box.__size__ + len(raw)
-
-        return bytes(box) + raw
+        self.raw = bytes(box) + raw
+        
+        return self.raw
 
 class CttsBox(Mp4CompileableBox):
     def __init__(self, fp, header):
@@ -1205,14 +1266,15 @@ class CttsBox(Mp4CompileableBox):
     def compile(self):
         raw = b''
         box = Mp4CompileableBox.CommonBox()
-        box.type = self.type.encode()
+        box.type = int.from_bytes(self.type.encode(), byteorder='big')
         box.version_flag = 0
         box.entry_count = self.box_info['entry_count']
         for etry in self.box_info['entry_list']:
-            raw += struct.pack('>II', etry['sample_count'], etry['composition_offset'])
+            raw += struct.pack('>II', etry['sample_count'], etry['sample_offset'])
         box.size = box.__size__ + len(raw)
-
-        return bytes(box) + raw
+        self.raw = bytes(box) + raw
+        
+        return self.raw
 
 class CslgBox(Mp4FullBox):
 
