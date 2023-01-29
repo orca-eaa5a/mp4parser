@@ -35,7 +35,7 @@ class Mp4Modifier(object):
         for idx, chunk in enumerate(chunks):
             if chunk['timestamp'] >= timestamp:
                 return chunk
-        return None
+        return chunk
 
 
     def get_chunk_by_time(self, timestamp, trak_id, sync=False):
