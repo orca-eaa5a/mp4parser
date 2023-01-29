@@ -1,6 +1,9 @@
 from io import BytesIO, BufferedReader
 import requests
 from .parser.iso import *
+import logging
+
+logging.getLogger().setLevel(logging.INFO)
 
 class Mp4Parser(object):
     def __init__(self) -> None:
@@ -46,20 +49,42 @@ class Mp4Parser(object):
         if type(start_byte) != int or type(end_byte) != int:
             assert False
         while True:
+            retry_cnt = 0
             end_offset = current_offset + CHUNK_SIZE - 1
             if current_offset + end_offset >= end_byte:
                 end_offset = end_byte - 1
-            resp = requests.get(url=url, headers={
-                'Range': 'bytes={}-{}'.format(current_offset, end_offset)
-            })
-            # check status code is http 206 (partital content)
-            if resp.status_code == 206 or resp.status_code == 200:
-                current_offset += len(resp.content)
-                _bin += resp.content
-                if current_offset >= end_byte:
-                    break
-            else:
-                assert False
+            while True:
+                if retry_cnt >= 5:
+                    raise Exception("byterange_request failed: range: {}-{}".format(current_offset, end_offset))
+                try:
+                    resp = requests.get(url=url, headers={
+                        'Range': 'bytes={}-{}'.format(current_offset, end_offset)
+                    })
+                    # check status code is http 206 (partital content)
+                    if resp.status_code == 206 or resp.status_code == 200:
+                        current_offset += len(resp.content)
+                        _bin += resp.content
+                        break
+                    else:
+                        retry_cnt+=1
+                        logging.info('byterange_request retry... {}'.format(retry_cnt))
+
+                except requests.exceptions.HTTPError as http_err:
+                    logging.error("byterange_request invalid url: {}".format(http_err.response.status_code))
+                    raise conn_err
+                except requests.exceptions.Timeout as tmout_err:
+                    logging.error("byterange_request timeout error: {}".format(str(tmout_err)))
+                    logging.info('byterange_request retry... {}'.format(retry_cnt))
+                    retry_cnt += 1
+                except requests.exceptions.ConnectionError as conn_err:
+                    logging.error("byterange_request connection error: {}".format(str(conn_err)))
+                    raise conn_err
+                except Exception as e:
+                    logging.error("byterange_request unknown error: {}".format(str(e)))
+                    raise e
+
+            if current_offset >= end_byte:
+                break
         
         return _bin
 
@@ -69,13 +94,13 @@ class Mp4Parser(object):
 
         def get_moov_raw_size(raw, offset=24):
             return int.from_bytes(raw[offset:offset+4], byteorder="big")
-
+        
         _raw = self.byterange_request(url, 0, 40)
         ftyp_sz = get_ftyp_raw_size(_raw)
         moov_sz = get_moov_raw_size(_raw, ftyp_sz)
         del _raw
         _raw = BytesIO(self.byterange_request(url, 0, ftyp_sz + moov_sz))
-
+    
         self.set_binary(_raw)
         self.parse()
 
@@ -149,6 +174,7 @@ class Mp4Parser(object):
                 s2c_index = 0
                 next_run = 0
                 stts_offset = 0
+                stts_sum = stts.box_info['entry_list'][stts_offset]['sample_count']
                 sample_idx = 0
                 chunk_timestamp = 0.0
                 for i, chunk in enumerate(chunk_offsets, start=1):
@@ -157,8 +183,9 @@ class Mp4Parser(object):
                         s2c_index += 1
                         next_run = sample_to_chunks[s2c_index]['first_chunk'] \
                             if s2c_index < len(sample_to_chunks) else len(chunk_offsets) + 1
-                    if stts.box_info['entry_list'][stts_offset]['sample_count'] <= sample_idx:
+                    if stts_sum <= sample_idx:
                         stts_offset += 1
+                        stts_sum += stts.box_info['entry_list'][stts_offset]['sample_count']
                         
                     chunk_timestamp = sample_idx/(timescale/stts.box_info['entry_list'][stts_offset]['sample_delta'])
                     chunk_dict = {
