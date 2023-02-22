@@ -146,6 +146,8 @@ class Mp4Modifier(object):
             stts = trak.get_first_box_matched('stts', True)
             stsc = trak.get_first_box_matched('stsc', True)
             stco = trak.get_first_box_matched('stco', True)
+            if not stco:
+                stco = trak.get_first_box_matched('co64', True)
             stsz = trak.get_first_box_matched('stsz', True)
 
             tkhd.edit_duration(duration, timescale)
@@ -206,17 +208,21 @@ class Mp4Modifier(object):
                     prev_etry['first_chunk'] = -1
                     prev_etry = etry
             
-            stsc.box_info['entry_list'] = list(filter(lambda x: x['first_chunk'] != -1, stsc.box_info['entry_list']))
-            for etry in stsc.box_info['entry_list']:
-                etry['first_chunk'] -= (start_chunk_id)
-                if etry['first_chunk'] <= 0:
-                    etry['first_chunk'] = 1
-            stsc.box_info['entry_count'] = len(stsc.box_info['entry_list'])
-            
             # edit_stco
             stco.box_info['entry_list'] = stco.box_info['entry_list'][start_chunk_id:end_chunk_id]
             stco.box_info['entry_count'] = len(stco.box_info['entry_list'])
 
+            stsc.box_info['entry_list'] = list(filter(lambda x: x['first_chunk'] != -1, stsc.box_info['entry_list']))
+            for idx, etry in enumerate(stsc.box_info['entry_list']):
+                etry['first_chunk'] -= (start_chunk_id)
+                if stco.box_info['entry_count'] <= etry['first_chunk']:
+                    stsc.box_info['entry_list'] = stsc.box_info['entry_list'][:idx]
+                    break
+                if etry['first_chunk'] <= 0:
+                    etry['first_chunk'] = 1
+            
+            stsc.box_info['entry_count'] = len(stsc.box_info['entry_list'])
+            
             # edit_stsz
             stsz.box_info['entry_list'] = stsz.box_info['entry_list'][first_sample_idx:last_sample_idx]
             stsz.box_info['sample_count'] = len(stsz.box_info['entry_list'])
@@ -270,6 +276,8 @@ class Mp4Modifier(object):
         for trak_id, handler_type in self.parser.track_type.items():
             trak = self.parser.tracks.get(trak_id)['trak']
             stco = trak.get_first_box_matched('stco', True)
+            if not stco:
+                stco = trak.get_first_box_matched('co64', True)
             for etry in stco.box_info['entry_list']:
                 etry['chunk_offset'] = etry['chunk_offset'] - delta + len(_raw) + 8 # <-- mdat header
             stco.compile()

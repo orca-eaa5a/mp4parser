@@ -1322,6 +1322,19 @@ class Co64Box(Mp4FullBox):
                 self.box_info['entry_list'].append({'chunk_offset': read_u64(fp)})
         finally:
             fp.seek(self.start_of_box + self.size)
+    
+    def compile(self):
+        raw = b''
+        box = Mp4CompileableBox.CommonBox()
+        box.type = int.from_bytes(self.type.encode(), byteorder='big')
+        box.version_flag = 0
+        box.entry_count = self.box_info['entry_count']
+        for etry in self.box_info['entry_list']:
+            raw += struct.pack('>Q', etry['chunk_offset'])
+        box.size = box.__size__ + len(raw)
+        self.raw = bytes(box) + raw
+        
+        return self.raw
 
 
 class PadbBox(Mp4FullBox):

@@ -25,9 +25,9 @@ if __name__ == '__main__':
 
     memory_usage("program start")
 
-    video_url = "https://rr1---sn-3pm7dned.googlevideo.com/videoplayback?expire=1677091089&ei=sQz2Y7fDHI-Rs8IP99yjqA0&ip=3.37.127.142&id=o-ADR7FSJ2K_YSe_Sxgty5r0xI4yLHTt48rflYwiq6_Ij4&itag=22&source=youtube&requiressl=yes&mh=9_&mm=31%2C29&mn=sn-3pm7dned%2Csn-3pm7knel&ms=au%2Crdu&mv=m&mvi=1&pl=24&initcwndbps=527500&vprv=1&mime=video%2Fmp4&cnr=14&ratebypass=yes&dur=30950.574&lmt=1675024506598428&mt=1677069226&fvip=5&fexp=24007246&c=ANDROID&txp=5432434&sparams=expire%2Cei%2Cip%2Cid%2Citag%2Csource%2Crequiressl%2Cvprv%2Cmime%2Ccnr%2Cratebypass%2Cdur%2Clmt&sig=AOq0QJ8wRgIhAJ1kyfsNoARTLS8JqNYsDlTdJQq224MShfdFNxrC9aHwAiEA1AsS7M7umxfE-hK58L0KL9F2arPmceHiQlSUyLTdrMw%3D&lsparams=mh%2Cmm%2Cmn%2Cms%2Cmv%2Cmvi%2Cpl%2Cinitcwndbps&lsig=AG3C_xAwRgIhAM2MjgjBkq0HMOHBAnGHbFAJ2gdPSB9FdIRIuRQWcuNhAiEAwLGimq_zUTVdSRMd9XyDpDFJfKfF37PCTWik5YD0q5o%3D"
-    sp = "02:18:13.000"
-    ep = "02:20:13.000"
+    video_url = "https://rr3---sn-3pm7dner.googlevideo.com/videoplayback?expire=1677099365&ei=BS32Y8WLAoK32roP8JSv-Ao&ip=15.164.233.225&id=o-AGK6tTY4WvH05csThHn6va1AfIcZLnjAEnylV3cRj5gN&itag=22&source=youtube&requiressl=yes&mh=7l&mm=31%2C26&mn=sn-3pm7dner%2Csn-oguesn6d&ms=au%2Conr&mv=m&mvi=3&pl=24&initcwndbps=506250&vprv=1&mime=video%2Fmp4&cnr=14&ratebypass=yes&dur=33397.051&lmt=1675512405060367&mt=1677077378&fvip=2&fexp=24007246&c=ANDROID&txp=6318224&sparams=expire%2Cei%2Cip%2Cid%2Citag%2Csource%2Crequiressl%2Cvprv%2Cmime%2Ccnr%2Cratebypass%2Cdur%2Clmt&sig=AOq0QJ8wRgIhAJY-TyHlXX3CkZTO82ULCoAxBDrFYlQGqKSe-XjhXvWmAiEAtkuvPcoYXxlfFWP7fFgbK4J3zm7ABKLZ0HF4g7OoLmI%3D&lsparams=mh%2Cmm%2Cmn%2Cms%2Cmv%2Cmvi%2Cpl%2Cinitcwndbps&lsig=AG3C_xAwRQIgAnygk1vEZVqQ8Qje65IWHjX7RQzW66RMSUtvw8dpsrQCIQCCBp73tJ3v-Wi_1ecYs-gyQ4OJzg2J1tELOQSGDZOnrA%3D%3D"
+    sp = "04:31:30"
+    ep = "04:41:20"
 
     sp = conver_timestr_to_timestamp(sp)
     ep = conver_timestr_to_timestamp(ep)
