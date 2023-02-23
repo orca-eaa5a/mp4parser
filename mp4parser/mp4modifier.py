@@ -182,7 +182,12 @@ class Mp4Modifier(object):
             stts.box_info['entry_list'] = list(filter(lambda x: x['sample_count'] != 0, stts.box_info['entry_list']))
             stts.box_info['entry_count'] = len(stts.box_info['entry_list'])
 
+            # edit_stco
+            stco.box_info['entry_list'] = stco.box_info['entry_list'][start_chunk_id:end_chunk_id]
+            stco.box_info['entry_count'] = len(stco.box_info['entry_list'])
+
             # edit_stsc
+            stsc_etry_sz = len(stsc.box_info['entry_list'])
             for i, etry in enumerate(stsc.box_info['entry_list']):
                 if i == 0:
                     prev_etry = etry
@@ -193,6 +198,9 @@ class Mp4Modifier(object):
                         break
                 prev_etry = etry
             
+            if i == stsc_etry_sz-1:
+                i = stsc_etry_sz
+                
             stsc.box_info['entry_list'] = stsc.box_info['entry_list'][:i]
             
             prev_etry = None
@@ -207,10 +215,6 @@ class Mp4Modifier(object):
                 else:
                     prev_etry['first_chunk'] = -1
                     prev_etry = etry
-            
-            # edit_stco
-            stco.box_info['entry_list'] = stco.box_info['entry_list'][start_chunk_id:end_chunk_id]
-            stco.box_info['entry_count'] = len(stco.box_info['entry_list'])
 
             stsc.box_info['entry_list'] = list(filter(lambda x: x['first_chunk'] != -1, stsc.box_info['entry_list']))
             for idx, etry in enumerate(stsc.box_info['entry_list']):
