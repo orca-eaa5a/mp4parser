@@ -35,6 +35,8 @@ class Mp4Modifier(object):
         """
         chunks = self.parser.tracks.get(trak_id)['chunks']
         bslindex = bisect_left(KeyWrapper(chunks, key=lambda chunk: chunk['timestamp']), timestamp)
+        if bslindex == len(chunks):
+            bslindex -=1
         return chunks[bslindex]
 
     def get_chunk_by_time_left(self, timestamp, trak_id, sync=False):
@@ -71,7 +73,7 @@ class Mp4Modifier(object):
             # chunk 중, iframe을 포함하는 chunk를 반환합니다.
             while idx >= 0:
                 chunk = chunks[idx]
-                first_sample_idx = chunk['chunk_samples'][0]['sample_ID']
+                first_sample_idx = chunk['chunk_samples'][0]['sample_ID']-1
                 
                 nearest_iframe_left = bisect_left(KeyWrapper(stss.box_info['entry_list'], key=lambda etry: etry['sample_number']), first_sample_idx)
                 if nearest_iframe_left > 1:
@@ -161,25 +163,26 @@ class Mp4Modifier(object):
             end_chunk_id = chunk_e['chunk_ID'] - 1
             
             # edit_stts
-            ## 1. get trimmed media sample index range
-            tmp = last_sample_idx
+            ## 1. remove the out ranged samples
+            #### 1. remove right first
             off = 0
-            ## 2. remove the out ranged samples
             for i, etry in enumerate(stts.box_info['entry_list']):
-                if (off + etry['sample_count']) > tmp:
-                    etry['sample_count'] = tmp - off
+                if (off + etry['sample_count']) > last_sample_idx:
+                    etry['sample_count'] = last_sample_idx - off
                     break
                 off += etry['sample_count']
             
             stts.box_info['entry_list'] = stts.box_info['entry_list'][:i+1]
-
-            tmp = first_sample_idx
+            
+            #### 2. remove left next
+            number_of_samples_remove_left = first_sample_idx
             for i, etry in enumerate(stts.box_info['entry_list']):
-                if etry['sample_count'] <= tmp:
-                    tmp -= etry['sample_count']
+                if etry['sample_count'] <= number_of_samples_remove_left:
+                    number_of_samples_remove_left -= etry['sample_count']
                     etry['sample_count'] = 0
                 else:
-                    etry['sample_count'] -= tmp
+                    etry['sample_count'] -= number_of_samples_remove_left
+                    break
                 
             stts.box_info['entry_list'] = list(filter(lambda x: x['sample_count'] != 0, stts.box_info['entry_list']))
             stts.box_info['entry_count'] = len(stts.box_info['entry_list'])
@@ -190,37 +193,21 @@ class Mp4Modifier(object):
 
             # edit_stsc
             stsc_etry_sz = len(stsc.box_info['entry_list'])
-            for i, etry in enumerate(stsc.box_info['entry_list']):
-                if i == 0:
-                    prev_etry = etry
-                    continue
-                
-                if (prev_etry['first_chunk'] - 1) <= end_chunk_id \
-                    and end_chunk_id < (etry['first_chunk'] - 1):
-                        break
-                prev_etry = etry
-            
-            if i == stsc_etry_sz-1:
-                i = stsc_etry_sz
-                
-            stsc.box_info['entry_list'] = stsc.box_info['entry_list'][:i]
-            
-            prev_etry = None
-            for i, etry in enumerate(stsc.box_info['entry_list']):
-                if i == 0:
-                    prev_etry = etry
-                    continue
-                
-                if (prev_etry['first_chunk'] - 1) <= start_chunk_id \
-                    and start_chunk_id < (etry['first_chunk'] - 1):
-                        break
-                else:
-                    prev_etry['first_chunk'] = -1
-                    prev_etry = etry
 
-            stsc.box_info['entry_list'] = list(filter(lambda x: x['first_chunk'] != -1, stsc.box_info['entry_list']))
+            closest_right = bisect_right(KeyWrapper(stsc.box_info['entry_list'], key=lambda etry: etry['first_chunk']), end_chunk_id)
+            if closest_right == stsc_etry_sz:
+                closest_right += 1
+            stsc.box_info['entry_list'] = stsc.box_info['entry_list'][:closest_right]
+            
+            closest_left = bisect_left(KeyWrapper(stsc.box_info['entry_list'], key=lambda etry: etry['first_chunk']), start_chunk_id)
+            if closest_left > 0:
+                closest_left -= 1
+
+            stsc.box_info['entry_list'] = stsc.box_info['entry_list'][closest_left:closest_right]
+            
             for idx, etry in enumerate(stsc.box_info['entry_list']):
-                etry['first_chunk'] -= (start_chunk_id)
+                etry['first_chunk'] -= start_chunk_id
+                # stco.box_info['entry_count] => number of chunks
                 if stco.box_info['entry_count'] <= etry['first_chunk']:
                     stsc.box_info['entry_list'] = stsc.box_info['entry_list'][:idx]
                     break
@@ -242,17 +229,24 @@ class Mp4Modifier(object):
                 if sync:
                 # edit_stss
                     stss = trak.get_first_box_matched('stss', True)
-                    slice_start = 0
-                    for slice_end, etry in enumerate(stss.box_info['entry_list']):
+                    closest_left = bisect_left(KeyWrapper(stss.box_info['entry_list'], key=lambda etry: etry['sample_number']), first_sample_idx)
+                    if closest_left > 0:
+                        closest_left -= 1
+                    closest_right = bisect_left(KeyWrapper(stss.box_info['entry_list'], key=lambda etry: etry['sample_number']), last_sample_idx)
+                    slice_start = closest_left
+
+                    for slice_end, etry in enumerate(stss.box_info['entry_list'][closest_left:closest_right+1]):
                         if etry['sample_number'] > last_sample_idx+1:
                             break
                         if etry['sample_number'] < first_sample_idx+1:
                             slice_start+=1
-                    stss.box_info['entry_list'] = stss.box_info['entry_list'][slice_start:slice_end]
+
+                    stss.box_info['entry_list'] = stss.box_info['entry_list'][slice_start: closest_left + slice_end]
                     stss.box_info['entry_count'] = len(stss.box_info['entry_list'])
                     for etry in stss.box_info['entry_list']:
                         etry['sample_number'] -= first_sample_idx
                     stss.compile()
+                    
                 ctts = trak.get_first_box_matched('ctts', True)
                 if ctts:
                     # edit_ctts
@@ -293,15 +287,6 @@ class Mp4Modifier(object):
         trim_result['end_offset'] = read_end_offset
 
         return _raw, trim_result
-
-    def trim(self, fp, start_point, end_point, sync=True):
-        headr_raw, trim_result = self.modify_header_for_trim(start_point, end_point, sync)
-
-        fp.seek(trim_result['start_offset'])
-        read_sz = trim_result['end_offset'] - trim_result['start_offset']
-        _bin = fp.read(read_sz)
-
-        return headr_raw, self.compile_mdat(_bin), trim_result
 
     def stream_trim(self, url, start_point, end_point, sync=True):
         headr_raw, trim_result = self.modify_header_for_trim(start_point, end_point, sync)

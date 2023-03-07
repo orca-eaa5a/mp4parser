@@ -39,8 +39,8 @@ if __name__ == '__main__':
     # ep = "09:16:37"
     # video_url = "https://rr2---sn-3pm7knee.googlevideo.com/videoplayback?expire=1677443653&ei=5W37Y5L7NtG_vcAP1uiX2AM&ip=3.36.13.247&id=o-AH67Jil8k9PAHGACixYWZftGFV6j0MFevmG2nqD_66MW&itag=22&source=youtube&requiressl=yes&mh=jo&mm=31%2C29&mn=sn-3pm7knee%2Csn-3pm7dner&ms=au%2Crdu&mv=m&mvi=2&pl=14&initcwndbps=912500&vprv=1&mime=video%2Fmp4&cnr=14&ratebypass=yes&dur=9191.061&lmt=1671379875882095&mt=1677421758&fvip=1&fexp=24007246&c=ANDROID&txp=7318224&sparams=expire%2Cei%2Cip%2Cid%2Citag%2Csource%2Crequiressl%2Cvprv%2Cmime%2Ccnr%2Cratebypass%2Cdur%2Clmt&sig=AOq0QJ8wRQIhAJMPjkrmM7JSeqei9ue2mVfLhMr7eBEh1fib38lbeB1IAiBz0hoAw-VDdSGsTmu1ahgxSAk34lWurhFAaJsuWeqb2w%3D%3D&lsparams=mh%2Cmm%2Cmn%2Cms%2Cmv%2Cmvi%2Cpl%2Cinitcwndbps&lsig=AG3C_xAwRAIgHJ5R4ool7zIfqb5EXKq9fsFeiNif_y3NbFyRTSiptEICIHPQkGhInnzt6v33m1FKd_Qlj5ofuAvzoBRrwkVdo5En"
 
-    sp = "00:15:12"
-    ep = "00:20:40"
+    sp = "00:14:12"
+    ep = "00:24:00"
     sp = conver_timestr_to_timestamp(sp)
     ep = conver_timestr_to_timestamp(ep)
     file_path = "./test.mp4"
@@ -80,17 +80,19 @@ if __name__ == '__main__':
 
     tmp_file_name = hashlib.sha256(file_path.encode()).hexdigest() + ".mp4"
     tmp_file_path = write_at_lambda_storage(tmp_file_name, raw)
-    # out_file, m_sp = ffmpeg_sync(tmp_file_path, trim_result)
-    # out_file = ffmpeg_cutoff_extra_times(out_file, sp - m_sp, duration)
-    # memory_usage("before del#2")
+    tmp_file_name2 = "./tmp/{}".format(hashlib.sha256(tmp_file_name.encode()).hexdigest() + ".mp4")
+    out_file, m_sp = ffmpeg_sync(tmp_file_path, tmp_file_name2, trim_result)
+    tmp_file_name2 = "./tmp/{}".format(hashlib.sha256(out_file.encode()).hexdigest() + ".mp4")
+    out_file = ffmpeg_cutoff_extra_times(out_file, tmp_file_name2, sp - m_sp, duration)
+    memory_usage("before del#2")
 
-    # del modifier
-    # del parser
+    del modifier
+    del parser
     
-    # memory_usage("after del#2")
+    memory_usage("after del#2")
 
-    # print(gc.collect())
+    print(gc.collect())
 
-    # memory_usage("before gc")
+    memory_usage("before gc")
     pass
     pass
