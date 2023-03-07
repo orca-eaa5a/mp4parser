@@ -1,6 +1,8 @@
+from collections import deque
 from io import BytesIO, BufferedReader
-import requests
 from .parser.iso import *
+from .utils.utils import byterange_request
+
 import logging
 
 logging.getLogger().setLevel(logging.INFO)
@@ -38,75 +40,35 @@ class Mp4Parser(object):
         self.fp = fp
 
         return True
-    
-    def byterange_request(self, url, start_byte, end_byte):
-        CHUNK_SIZE = 1024*1024*10 # 10mb request
-        if end_byte < CHUNK_SIZE:
-            CHUNK_SIZE = end_byte
 
-        current_offset = start_byte
-        _bin = b''
-        if type(start_byte) != int or type(end_byte) != int:
-            assert False
-        while True:
-            retry_cnt = 0
-            end_offset = current_offset + CHUNK_SIZE - 1
-            if current_offset + end_offset >= end_byte:
-                end_offset = end_byte - 1
-            while True:
-                if retry_cnt >= 5:
-                    raise Exception("byterange_request failed: range: {}-{}".format(current_offset, end_offset))
-                try:
-                    resp = requests.get(url=url, headers={
-                        'Range': 'bytes={}-{}'.format(current_offset, end_offset)
-                    })
-                    # check status code is http 206 (partital content)
-                    if resp.status_code == 206 or resp.status_code == 200:
-                        current_offset += len(resp.content)
-                        _bin += resp.content
-                        break
-                    else:
-                        retry_cnt+=1
-                        logging.info('byterange_request retry... {}'.format(retry_cnt))
+    def get_ftypbox_size(self, raw):
+        return int.from_bytes(raw[:4], byteorder="big")
 
-                except requests.exceptions.HTTPError as http_err:
-                    logging.error("byterange_request invalid url: {}".format(http_err.response.status_code))
-                    raise conn_err
-                except requests.exceptions.Timeout as tmout_err:
-                    logging.error("byterange_request timeout error: {}".format(str(tmout_err)))
-                    logging.info('byterange_request retry... {}'.format(retry_cnt))
-                    retry_cnt += 1
-                except requests.exceptions.ConnectionError as conn_err:
-                    logging.error("byterange_request connection error: {}".format(str(conn_err)))
-                    raise conn_err
-                except Exception as e:
-                    logging.error("byterange_request unknown error: {}".format(str(e)))
-                    raise e
-
-            if current_offset >= end_byte:
-                break
-        
-        return _bin
+    def get_moovbox_size(self, raw, offset=24):
+        return int.from_bytes(raw[offset:offset+4], byteorder="big")
 
     def stream_parse(self, url):
-        def get_ftyp_raw_size(raw):
-            return int.from_bytes(raw[:4], byteorder="big")
-
-        def get_moov_raw_size(raw, offset=24):
-            return int.from_bytes(raw[offset:offset+4], byteorder="big")
-        
-        _raw = self.byterange_request(url, 0, 40)
-        ftyp_sz = get_ftyp_raw_size(_raw)
-        moov_sz = get_moov_raw_size(_raw, ftyp_sz)
+        _raw = byterange_request(url, 0, 40)
+        ftyp_sz = self.get_ftypbox_size(_raw)
+        moov_sz = self.get_moovbox_size(_raw, ftyp_sz)
         del _raw
-        _raw = BytesIO(self.byterange_request(url, 0, ftyp_sz + moov_sz))
+        _raw = BytesIO(byterange_request(url, 0, ftyp_sz + moov_sz))
     
         self.set_binary(_raw)
-        self.parse()
+        self.parse_metadata()
 
+    def binary_parse(self, file_path):
+        with open(file_path, 'rb') as f:
+            _raw = f.read(40)
+            ftyp_sz = self.get_ftypbox_size(_raw)
+            moov_sz = self.get_moovbox_size(_raw, ftyp_sz)
+            del _raw
+            f.seek(0, 0)
+            _raw = BytesIO(f.read(ftyp_sz + moov_sz))
+        self.set_binary(_raw)
+        self.parse_metadata()
 
-
-    def parse(self):
+    def parse_metadata(self):
         if not self.fp:
             return False
         while True:
@@ -146,7 +108,6 @@ class Mp4Parser(object):
                 stsc = stbl.get_first_box_matched('stsc', False)
                 stts = stbl.get_first_box_matched('stts', False)
 
-
                 if not stco:
                     stco = stbl.get_first_box_matched('co64', False)
                 if not stsz:
@@ -154,7 +115,6 @@ class Mp4Parser(object):
 
                 timescale = mdhd.box_info['timescale']
                 trak_id = tkhd.box_info['track_ID']
-                samplebox = stbl
                 self.duration = self.mvhd.box_info['duration']/self.mvhd.box_info['timescale']
                 chunk_offsets = stco.box_info['entry_list']
                 sample_size_box = stsz
@@ -162,7 +122,7 @@ class Mp4Parser(object):
                     self.track_type[trak_id] = hdlr.box_info['handler_type']
                     self.tracks[trak_id] = {
                         'trak': trak,
-                        'chunks': []
+                        'chunks': deque()
                     }
 
                 if sample_size_box.box_info['sample_size'] > 0:
@@ -193,7 +153,7 @@ class Mp4Parser(object):
                                     'chunk_ID': i,
                                     'chunk_offset': chunk['chunk_offset'],
                                     'samples_per_chunk': samples_per_chunk,
-                                    'chunk_samples': [],
+                                    'chunk_samples': deque(),
                                     'timestamp': chunk_timestamp
                                 }
                     sample_offset = chunk['chunk_offset']

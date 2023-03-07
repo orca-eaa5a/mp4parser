@@ -1,6 +1,19 @@
 
 from .mp4parse import Mp4Parser
+from bisect import bisect_left, bisect_right
 import struct
+from .utils.utils import byterange_request
+
+class KeyWrapper:
+    def __init__(self, iterable, key):
+        self.it = iterable
+        self.key = key
+
+    def __getitem__(self, i):
+        return self.key(self.it[i])
+
+    def __len__(self):
+        return len(self.it)
 
 class Mp4Modifier(object):
     def __init__(self, parser:Mp4Parser) -> None:
@@ -12,35 +25,22 @@ class Mp4Modifier(object):
         self.moov = parser.moov
         # self.chunks = parser.chunks
         pass
-
-    def get_chunk_with_extratime(self, timestamp, trak_id):
-        targ_chunk = None
-        chunks = self.parser.tracks.get(trak_id)['chunks']
-        for idx, chunk in enumerate(chunks):
-            if chunk['timestamp'] >= timestamp:
-                break
-        if not targ_chunk:
-            targ_chunk = chunk
-        
-        return targ_chunk
-        
     def compile_mdat(self, raw):
         return struct.pack(">I", len(raw)+8) + b'mdat' + raw
-
-    def get_chunk_by_time_later(self, timestamp, trak_id):
+    
+    def get_closest_chunk_right(self, timestamp, trak_id):
         """시각 값에 해당하는 trak의 chunk를 가져옵니다.
-        요청한 시각과 일치하는 chunk가 없을 경우, 바로 직후의 chunk를 가져옵니다.
+        요청한 시각과 일치하는 chunk가 없을 경우, 
+        요청한 timestamp "이후"의 시간 값을 가진 chunk 중 가장 가까운 chunk를 가져옵니다.
         """
         chunks = self.parser.tracks.get(trak_id)['chunks']
-        for idx, chunk in enumerate(chunks):
-            if chunk['timestamp'] >= timestamp:
-                return chunk
-        return chunk
+        bslindex = bisect_left(KeyWrapper(chunks, key=lambda chunk: chunk['timestamp']), timestamp)
+        return chunks[bslindex]
 
-
-    def get_chunk_by_time(self, timestamp, trak_id, sync=False):
+    def get_chunk_by_time_left(self, timestamp, trak_id, sync=False):
         """시각 값에 해당하는 trak의 chunk를 가져옵니다.
-        요청한 시각과 일치하는 chunk가 없을 경우, 직전의 chunk를 가져옵니다.
+        요청한 시각과 일치하는 chunk가 없을 경우, 
+        요청한 timestamp "이후"의 시간 값을 가진 chunk 중 가장 가까운 chunk를 가져옵니다.
         sync:
         iframe을 고려하여 chunk를 가져옵니다.
         요청한 시각 값에 해당하는 chunk에 iframe이 포함되어있지 않을 경우, 시각 값보다 선행하는
@@ -63,29 +63,31 @@ class Mp4Modifier(object):
             # no stss, sync is impossible
             sync = False
         
-        candidate_chunks = []
-        find = False
-        for idx, chunk in enumerate(chunks):
-            if chunk['timestamp'] >= timestamp:
-                find = True
-                break
+        bslindex = bisect_left(KeyWrapper(chunks, key=lambda chunk: chunk['timestamp']), timestamp)
+
         if sync:
+            idx = bslindex
+            # 요청한 시각 값에 해당하는 chunk에 iframe이 포함되어있지 않을 경우, 시각 값보다 선행하는
+            # chunk 중, iframe을 포함하는 chunk를 반환합니다.
             while idx >= 0:
-                for etry in reversed(stss.box_info['entry_list']):
-                    chunk = chunks[idx]
-                    first_sample_idx = chunk['chunk_samples'][0]['sample_ID']
+                chunk = chunks[idx]
+                first_sample_idx = chunk['chunk_samples'][0]['sample_ID']
+                
+                nearest_iframe_left = bisect_left(KeyWrapper(stss.box_info['entry_list'], key=lambda etry: etry['sample_number']), first_sample_idx)
+                if nearest_iframe_left > 1:
+                    nearest_iframe_left -= 1
+                nearest_iframe_right = bisect_right(KeyWrapper(stss.box_info['entry_list'], key=lambda etry: etry['sample_number']), first_sample_idx + chunk['samples_per_chunk'])
+                for etry in stss.box_info['entry_list'][nearest_iframe_left:nearest_iframe_right+1]:
                     if first_sample_idx <= etry['sample_number'] and \
                             etry['sample_number'] < first_sample_idx + chunk['samples_per_chunk']:
                         return chunk
                 idx -= 1
-        if find:
-            if chunk['timestamp'] == timestamp:
-                return chunk
-            return chunks[idx-1]
-        if sync:
-            return candidate_chunks[-1]
+            raise Exception("Can't find iframe chunk")
+        else:
+            if chunks[bslindex] > timestamp and bslindex > 1:
+                bslindex-=1
         
-        return None
+        return chunks[bslindex]
 
     def modify_header_for_trim(self, start_point, end_point, sync=True):
         start_timestamp = start_point
@@ -105,8 +107,8 @@ class Mp4Modifier(object):
             chunk_e = None
             for trak_id, handler_type in self.parser.track_type.items():
                 if handler_type == 'vide':
-                    chunk_s = self.get_chunk_by_time(timestamp=start_timestamp, trak_id=trak_id, sync=True)
-                chunk_e = self.get_chunk_with_extratime(timestamp=end_timestamp, trak_id=trak_id)
+                    chunk_s = self.get_chunk_by_time_left(timestamp=start_timestamp, trak_id=trak_id, sync=True)
+                chunk_e = self.get_closest_chunk_right(timestamp=end_timestamp, trak_id=trak_id)
                 if chunk_s:
                     break
             start_timestamp = chunk_s['timestamp']
@@ -119,11 +121,11 @@ class Mp4Modifier(object):
 
         self.parser.mvhd.edit_duration(duration)
         for trak_id, handler_type in self.parser.track_type.items():
-            chunk_s = self.get_chunk_by_time_later(
+            chunk_s = self.get_closest_chunk_right(
                 timestamp=start_timestamp,
                 trak_id=trak_id
             )
-            chunk_e = self.get_chunk_by_time_later(
+            chunk_e = self.get_closest_chunk_right(
                 timestamp=end_timestamp,
                 trak_id=trak_id
             )
@@ -301,15 +303,20 @@ class Mp4Modifier(object):
 
         return headr_raw, self.compile_mdat(_bin), trim_result
 
-    def livetrim(self, url, start_point, end_point, sync=True):
+    def stream_trim(self, url, start_point, end_point, sync=True):
         headr_raw, trim_result = self.modify_header_for_trim(start_point, end_point, sync)
-        mdat_raw = self.parser.byterange_request(
-                                    url, 
-                                    trim_result['start_offset'],
-                                    trim_result['end_offset'],
-                                )
+        mdat_raw = byterange_request(url, trim_result['start_offset'], trim_result['end_offset'])
         
         return headr_raw, self.compile_mdat(mdat_raw), trim_result
+    
+    def data_trim(self, file_path, start_point, end_point, sync=True):
+        headr_raw, trim_result = self.modify_header_for_trim(start_point, end_point, sync)
+        with open(file_path, 'rb') as f:
+            f.seek(trim_result['start_offset'], 0)
+            mdat_raw = f.read(trim_result['end_offset'] - trim_result['start_offset'])
+        
+        return headr_raw, self.compile_mdat(mdat_raw), trim_result
+
 
     def re_serialize(self, box, res, box_content):
         header_flag = False
